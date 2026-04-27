@@ -1,6 +1,6 @@
-"""OpenAI-style chat base for :class:`OpenAIChatTransport` (NIM, DeepSeek, etc.).
+"""OpenAI-style chat base for :class:`OpenAIChatTransport` (NIM, etc.).
 
-``AnthropicMessagesTransport``-based providers (OpenRouter, LM Studio, …) live
+``AnthropicMessagesTransport``-based providers (OpenRouter, LM Studio, DeepSeek, …) live
 in separate modules; do not list them as subclasses of this class.
 """
 
@@ -56,7 +56,7 @@ def _iter_heuristic_tool_use_sse(
 
 
 class OpenAIChatTransport(BaseProvider):
-    """Base for OpenAI-compatible ``/chat/completions`` adapters (NIM, DeepSeek, …)."""
+    """Base for OpenAI-compatible ``/chat/completions`` adapters (NIM, …)."""
 
     def __init__(
         self,
@@ -354,8 +354,13 @@ class OpenAIChatTransport(BaseProvider):
                 )
                 for event in sse.close_all_blocks():
                     yield event
-                for event in sse.emit_error(error_message):
-                    yield event
+                if sse.blocks.has_emitted_tool_block():
+                    # Avoid a second assistant text block after an emitted tool_use, which
+                    # breaks OpenAI history replay (issue #206) when Claude Code stores it.
+                    yield sse.emit_top_level_error(error_message)
+                else:
+                    for event in sse.emit_error(error_message):
+                        yield event
                 yield sse.message_delta("end_turn", 1)
                 yield sse.message_stop()
                 return
@@ -386,6 +391,17 @@ class OpenAIChatTransport(BaseProvider):
             or has_started_tool
         )
         if not has_content_blocks:
+            for event in sse.ensure_text_block():
+                yield event
+            yield sse.emit_text_delta(" ")
+        elif (
+            not has_started_tool
+            and not sse.accumulated_text.strip()
+            and sse.accumulated_reasoning.strip()
+        ):
+            # Some OpenAI-compatible models (e.g. NIM reasoning templates) stream only
+            # ``reasoning_content`` with no ``content``; emit a minimal text block so
+            # clients and smoke ``text_content()`` see a completed assistant message.
             for event in sse.ensure_text_block():
                 yield event
             yield sse.emit_text_delta(" ")

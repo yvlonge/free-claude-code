@@ -155,7 +155,9 @@ def test_service_rejects_mixed_pool_when_any_target_uses_openai_chat():
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: MagicMock(),
-        target_pool_getter=lambda _model_ref: _provider_pool("open_router", "deepseek"),
+        target_pool_getter=lambda _model_ref: _provider_pool(
+            "open_router", "nvidia_nim"
+        ),
         model_router=FixedProviderModelRouter(settings, "open_router"),
     )
     request = MessagesRequest(
@@ -636,7 +638,7 @@ def test_service_rejects_listed_server_tools_on_openai_chat() -> None:
         settings,
         provider_getter=lambda _: MagicMock(),
         target_pool_getter=_single_target_pool,
-        model_router=FixedProviderModelRouter(settings, "deepseek"),
+        model_router=FixedProviderModelRouter(settings, "nvidia_nim"),
     )
     request = MessagesRequest(
         model="m",
