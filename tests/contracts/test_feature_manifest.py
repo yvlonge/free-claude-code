@@ -8,6 +8,7 @@ from providers.base import BaseProvider
 from providers.deepseek import DeepSeekProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
+from providers.local_api import LocalAPIProvider
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
@@ -73,6 +74,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "lmstudio": LMStudioProvider,
         "llamacpp": LlamaCppProvider,
         "ollama": OllamaProvider,
+        "local_api": LocalAPIProvider,
     }
     for provider_class in provider_classes.values():
         assert issubclass(provider_class, BaseProvider)

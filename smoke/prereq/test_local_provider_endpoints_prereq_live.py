@@ -35,6 +35,16 @@ def test_ollama_models_endpoint_when_available(smoke_config: SmokeConfig) -> Non
     )
 
 
+@pytest.mark.live
+@pytest.mark.smoke_target("local_api")
+def test_local_api_models_endpoint_when_available(smoke_config: SmokeConfig) -> None:
+    _assert_models_endpoint(
+        smoke_config.settings.local_api_base_url,
+        timeout_s=smoke_config.timeout_s,
+        provider_name="local_api",
+    )
+
+
 def _assert_models_endpoint(
     base_url: str, *, timeout_s: float, provider_name: str
 ) -> None:

@@ -64,6 +64,9 @@ def get_proxy_service(
         provider_getter=lambda provider_type: dependencies.resolve_provider(
             provider_type, app=request.app, settings=settings
         ),
+        target_pool_getter=lambda model_ref: (
+            request.app.state.provider_registry.get_target_pool(model_ref)
+        ),
         token_counter=get_token_count,
     )
 
@@ -83,7 +86,7 @@ async def create_message(
     _auth=Depends(require_api_key),
 ):
     """Create a message (always streaming)."""
-    return service.create_message(request_data)
+    return await service.create_message(request_data)
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])

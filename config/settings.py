@@ -11,6 +11,11 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .model_targets import (
+    WeightedTarget,
+    parse_single_target,
+    parse_weighted_target_pool,
+)
 from .nim import NimSettings
 from .provider_ids import SUPPORTED_PROVIDER_IDS
 
@@ -134,6 +139,13 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ==================== Local API Config ====================
+    local_api_base_url: str = Field(
+        default="http://127.0.0.1:4000/v1",
+        validation_alias="LOCAL_API_BASE_URL",
+    )
+    local_api_api_key: str = Field(default="", validation_alias="LOCAL_API_API_KEY")
+
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
@@ -158,6 +170,10 @@ class Settings(BaseSettings):
     )
     provider_max_concurrency: int = Field(
         default=5, validation_alias="PROVIDER_MAX_CONCURRENCY"
+    )
+    provider_target_cooldown_seconds: float = Field(
+        default=30.0,
+        validation_alias="PROVIDER_TARGET_COOLDOWN_SECONDS",
     )
     enable_model_thinking: bool = Field(
         default=True, validation_alias="ENABLE_MODEL_THINKING"
@@ -377,17 +393,18 @@ class Settings(BaseSettings):
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        if "/" not in v:
-            raise ValueError(
-                f"Model must be prefixed with provider type. "
-                f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
-                f"Format: provider_type/model/name"
-            )
-        provider = v.split("/", 1)[0]
-        if provider not in SUPPORTED_PROVIDER_IDS:
-            supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
-            raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
+        parse_weighted_target_pool(
+            v,
+            supported_provider_ids=SUPPORTED_PROVIDER_IDS,
+        )
         return v
+
+    @field_validator("provider_target_cooldown_seconds")
+    @classmethod
+    def validate_provider_target_cooldown_seconds(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("provider_target_cooldown_seconds must be >= 0")
+        return float(v)
 
     @model_validator(mode="after")
     def check_nvidia_nim_api_key(self) -> Settings:
@@ -419,12 +436,12 @@ class Settings(BaseSettings):
     @property
     def provider_type(self) -> str:
         """Extract provider type from the default model string."""
-        return Settings.parse_provider_type(self.model)
+        return self.resolve_model_targets(self.model)[0].provider_id
 
     @property
     def model_name(self) -> str:
         """Extract the actual model name from the default model string."""
-        return Settings.parse_model_name(self.model)
+        return self.resolve_model_targets(self.model)[0].model_name
 
     def resolve_model(self, claude_model_name: str) -> str:
         """Resolve a Claude model name to the configured provider/model string.
@@ -463,12 +480,28 @@ class Settings(BaseSettings):
     @staticmethod
     def parse_provider_type(model_string: str) -> str:
         """Extract provider type from any 'provider/model' string."""
-        return model_string.split("/", 1)[0]
+        provider_id, _ = parse_single_target(
+            model_string,
+            supported_provider_ids=SUPPORTED_PROVIDER_IDS,
+        )
+        return provider_id
 
     @staticmethod
     def parse_model_name(model_string: str) -> str:
         """Extract model name from any 'provider/model' string."""
-        return model_string.split("/", 1)[1]
+        _, model_name = parse_single_target(
+            model_string,
+            supported_provider_ids=SUPPORTED_PROVIDER_IDS,
+        )
+        return model_name
+
+    @staticmethod
+    def resolve_model_targets(model_string: str) -> tuple[WeightedTarget, ...]:
+        """Parse any model setting value into one or more weighted targets."""
+        return parse_weighted_target_pool(
+            model_string,
+            supported_provider_ids=SUPPORTED_PROVIDER_IDS,
+        )
 
     model_config = SettingsConfigDict(
         env_file=_env_files(),

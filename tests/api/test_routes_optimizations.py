@@ -12,7 +12,26 @@ app = create_app()
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    def _single_target_pool(model_ref: str):
+        from providers.registry import ProviderTarget, ProviderTargetPool
+
+        provider_id, model_name = model_ref.split("/", 1)
+        return ProviderTargetPool(
+            (
+                ProviderTarget(
+                    provider_id=provider_id,
+                    model_name=model_name,
+                    full_ref=model_ref,
+                    weight=1,
+                ),
+            )
+        )
+
+    with patch(
+        "providers.registry.ProviderRegistry.get_target_pool",
+        side_effect=_single_target_pool,
+    ):
+        yield TestClient(app)
 
 
 @pytest.fixture

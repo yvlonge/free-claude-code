@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from config.model_targets import WeightedTarget
 from config.settings import Settings, get_settings
 
 DEFAULT_TARGETS = frozenset(
@@ -21,6 +22,7 @@ DEFAULT_TARGETS = frozenset(
         "lmstudio",
         "messaging",
         "ollama",
+        "local_api",
         "providers",
         "rate_limit",
         "tools",
@@ -51,6 +53,7 @@ TARGET_REQUIRED_ENV: dict[str, tuple[str, ...]] = {
     "lmstudio": ("LM_STUDIO_BASE_URL with a running LM Studio server",),
     "llamacpp": ("LLAMACPP_BASE_URL with a running llama-server",),
     "ollama": ("OLLAMA_BASE_URL with a running Ollama server",),
+    "local_api": ("LOCAL_API_BASE_URL with a running OpenAI-compatible server",),
     "telegram": (
         "TELEGRAM_BOT_TOKEN",
         "ALLOWED_TELEGRAM_USER_ID or FCC_SMOKE_TELEGRAM_CHAT_ID",
@@ -72,6 +75,23 @@ class ProviderModel:
     @property
     def model_name(self) -> str:
         return Settings.parse_model_name(self.full_model)
+
+
+def _iter_unique_targets(
+    source: str,
+    model_value: str | None,
+) -> list[tuple[str, WeightedTarget]]:
+    if not model_value:
+        return []
+    parsed = Settings.resolve_model_targets(model_value)
+    result: list[tuple[str, WeightedTarget]] = []
+    seen: set[str] = set()
+    for target in parsed:
+        if target.full_ref in seen:
+            continue
+        seen.add(target.full_ref)
+        result.append((source, target))
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,17 +140,24 @@ class SmokeConfig:
         seen: set[str] = set()
         models: list[ProviderModel] = []
         for source, model in candidates:
-            if not model or model in seen:
-                continue
-            provider = Settings.parse_provider_type(model)
-            if self.provider_matrix and provider not in self.provider_matrix:
-                continue
-            if not self.has_provider_configuration(provider):
-                continue
-            seen.add(model)
-            models.append(
-                ProviderModel(provider=provider, full_model=model, source=source)
-            )
+            for source_name, target in _iter_unique_targets(source, model):
+                if target.full_ref in seen:
+                    continue
+                if (
+                    self.provider_matrix
+                    and target.provider_id not in self.provider_matrix
+                ):
+                    continue
+                if not self.has_provider_configuration(target.provider_id):
+                    continue
+                seen.add(target.full_ref)
+                models.append(
+                    ProviderModel(
+                        provider=target.provider_id,
+                        full_model=target.full_ref,
+                        source=source_name,
+                    )
+                )
         return models
 
     def has_provider_configuration(self, provider: str) -> bool:
@@ -146,6 +173,8 @@ class SmokeConfig:
             return bool(self.settings.llamacpp_base_url.strip())
         if provider == "ollama":
             return bool(self.settings.ollama_base_url.strip())
+        if provider == "local_api":
+            return bool(self.settings.local_api_base_url.strip())
         return False
 
 

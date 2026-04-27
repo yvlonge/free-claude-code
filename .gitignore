@@ -15,3 +15,5 @@ llama_cache
 openspec/
 .agent/
 .codex/
+LOCAL_GIT_WORKFLOW.md
+GIT_CHEATSHEET.md

@@ -27,6 +27,21 @@ def test_messages_request_ignores_internal_routing_fields_when_supplied():
     assert "resolved_provider_model" not in request.model_dump()
 
 
+def test_token_count_request_ignores_internal_routing_fields_when_supplied():
+    request = TokenCountRequest.model_validate(
+        {
+            "model": "target-model",
+            "original_model": "claude-3-opus",
+            "resolved_provider_model": "nvidia_nim/target-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+    assert request.model == "target-model"
+    assert "original_model" not in request.model_dump()
+    assert "resolved_provider_model" not in request.model_dump()
+
+
 def test_token_count_request_parses_without_model_mapping_side_effects():
     request = TokenCountRequest(
         model="claude-3-sonnet", messages=[Message(role="user", content="hello")]

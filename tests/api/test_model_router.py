@@ -25,8 +25,6 @@ def test_model_router_resolves_default_model(settings):
     resolved = ModelRouter(settings).resolve("claude-3-opus")
 
     assert resolved.original_model == "claude-3-opus"
-    assert resolved.provider_id == "nvidia_nim"
-    assert resolved.provider_model == "fallback-model"
     assert resolved.provider_model_ref == "nvidia_nim/fallback-model"
     assert resolved.thinking_enabled is True
 
@@ -41,7 +39,7 @@ def test_model_router_applies_opus_override(settings):
     )
     routed = ModelRouter(settings).resolve_messages_request(request)
 
-    assert routed.request.model == "deepseek/deepseek-r1"
+    assert routed.request.model == "claude-opus-4-20250514"
     assert routed.resolved.provider_model_ref == "open_router/deepseek/deepseek-r1"
     assert routed.resolved.original_model == "claude-opus-4-20250514"
     assert routed.resolved.thinking_enabled is True
@@ -72,7 +70,7 @@ def test_model_router_applies_haiku_override(settings):
         )
     )
 
-    assert routed.request.model == "qwen2.5-7b"
+    assert routed.request.model == "claude-3-haiku-20240307"
     assert routed.resolved.provider_model_ref == "lmstudio/qwen2.5-7b"
 
 
@@ -87,7 +85,7 @@ def test_model_router_applies_sonnet_override(settings):
         )
     )
 
-    assert routed.request.model == "meta/llama-3.3-70b-instruct"
+    assert routed.request.model == "claude-sonnet-4-20250514"
     assert (
         routed.resolved.provider_model_ref == "nvidia_nim/meta/llama-3.3-70b-instruct"
     )
@@ -104,6 +102,22 @@ def test_model_router_routes_token_count_request(settings):
 
     assert routed.request.model == "qwen2.5-7b"
     assert request.model == "claude-3-haiku-20240307"
+
+
+def test_model_router_keeps_pool_ref_and_token_count_uses_first_target(settings):
+    settings.model = "deepseek/chat@2,nvidia_nim/backup@1"
+
+    resolved = ModelRouter(settings).resolve("claude-2.1")
+    assert resolved.provider_model_ref == "deepseek/chat@2,nvidia_nim/backup@1"
+
+    routed = ModelRouter(settings).resolve_token_count_request(
+        TokenCountRequest(
+            model="claude-2.1",
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+    assert routed.request.model == "chat"
+    assert routed.request.resolved_provider_model == "deepseek/chat"
 
 
 def test_model_router_logs_mapping(settings):

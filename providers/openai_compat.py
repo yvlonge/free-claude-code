@@ -214,11 +214,13 @@ class OpenAIChatTransport(BaseProvider):
         thinking_enabled: bool | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
-        with logger.contextualize(request_id=request_id):
-            async for event in self._stream_response_impl(
-                request, input_tokens, request_id, thinking_enabled=thinking_enabled
-            ):
-                yield event
+        async for event in self._stream_response_impl(
+            request,
+            input_tokens,
+            request_id,
+            thinking_enabled=thinking_enabled,
+        ):
+            yield event
 
     async def _stream_response_impl(
         self,
@@ -230,6 +232,7 @@ class OpenAIChatTransport(BaseProvider):
     ) -> AsyncIterator[str]:
         """Shared streaming implementation."""
         tag = self._provider_name
+        stream_logger = logger.bind(request_id=request_id)
         message_id = f"msg_{uuid.uuid4()}"
         sse = SSEBuilder(
             message_id,
@@ -241,7 +244,7 @@ class OpenAIChatTransport(BaseProvider):
         body = self._build_request_body(request, thinking_enabled=thinking_enabled)
         thinking_enabled = self._is_thinking_enabled(request, thinking_enabled)
         req_tag = f" request_id={request_id}" if request_id else ""
-        logger.info(
+        stream_logger.info(
             "{}_STREAM:{} model={} msgs={} tools={}",
             tag,
             req_tag,
@@ -274,7 +277,7 @@ class OpenAIChatTransport(BaseProvider):
 
                     if choice.finish_reason:
                         finish_reason = choice.finish_reason
-                        logger.debug("{} finish_reason: {}", tag, finish_reason)
+                        stream_logger.debug("{} finish_reason: {}", tag, finish_reason)
 
                     # Handle reasoning_content (OpenAI extended format)
                     reasoning = getattr(delta, "reasoning_content", None)
@@ -343,7 +346,7 @@ class OpenAIChatTransport(BaseProvider):
                     read_timeout_s=self._config.http_read_timeout,
                 )
                 error_message = append_request_id(base_message, request_id)
-                logger.info(
+                stream_logger.info(
                     "{}_STREAM: Emitting SSE error event for {}{}",
                     tag,
                     type(e).__name__,
@@ -401,7 +404,7 @@ class OpenAIChatTransport(BaseProvider):
         if usage_info and hasattr(usage_info, "prompt_tokens"):
             provider_input = usage_info.prompt_tokens
             if isinstance(provider_input, int):
-                logger.debug(
+                stream_logger.debug(
                     "TOKEN_ESTIMATE: our={} provider={} diff={:+d}",
                     input_tokens,
                     provider_input,

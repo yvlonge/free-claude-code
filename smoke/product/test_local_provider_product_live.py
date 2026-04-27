@@ -38,6 +38,15 @@ def test_ollama_native_messages_e2e(smoke_config: SmokeConfig) -> None:
     )
 
 
+@pytest.mark.smoke_target("local_api")
+def test_local_api_openai_chat_e2e(smoke_config: SmokeConfig) -> None:
+    _local_native_messages_e2e(
+        smoke_config,
+        provider="local_api",
+        base_url=smoke_config.settings.local_api_base_url,
+    )
+
+
 def _local_native_messages_e2e(
     smoke_config: SmokeConfig,
     *,

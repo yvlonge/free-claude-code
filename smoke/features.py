@@ -48,6 +48,8 @@ README_FEATURES: tuple[str, ...] = (
     "vscode_extension",
     "intellij_extension",
     "voice_notes",
+    "local_api_endpoint",
+    "weighted_target_pools",
 )
 
 
@@ -269,6 +271,34 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         ("messaging", "voice"),
         ("VOICE_NOTE_ENABLED", "FCC_SMOKE_RUN_VOICE", "WHISPER_DEVICE"),
         "fake cancellation is required; backend transcription is opt-in",
+    ),
+    FeatureCoverage(
+        "local_api_endpoint",
+        "local_api OpenAI-chat endpoint works when running",
+        "readme",
+        ("tests/providers/test_local_api.py", "tests/providers/test_registry.py"),
+        ("test_local_api_models_endpoint_when_available",),
+        ("test_local_api_openai_chat_e2e",),
+        ("local_api",),
+        ("LOCAL_API_BASE_URL with running OpenAI-compatible server",),
+        "skip when local upstream is unavailable",
+    ),
+    FeatureCoverage(
+        "weighted_target_pools",
+        "MODEL* values support weighted pools with health-aware failover",
+        "readme",
+        (
+            "tests/core/test_model_targets.py",
+            "tests/core/test_scheduling.py",
+            "tests/api/test_services_target_pool.py",
+            "tests/config/test_config.py",
+        ),
+        (),
+        (),
+        ("providers",),
+        ("MODEL, MODEL_*, PROVIDER_TARGET_COOLDOWN_SECONDS",),
+        "covered by deterministic contract tests; live pool failures are provider-dependent",
+        "deterministic coverage is in unit/contract tests",
     ),
     FeatureCoverage(
         "anthropic_api_routes",

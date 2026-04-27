@@ -1,5 +1,6 @@
 """Tests for streaming error handling in providers/nvidia_nim/client.py."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -692,6 +693,44 @@ class TestStreamChunkEdgeCases:
         assert "Connection reset" in event_text
         assert "message_stop" in event_text
         _assert_no_content_deltas_after_error_text(events, "Connection reset")
+
+    @pytest.mark.asyncio
+    async def test_stream_can_resume_in_different_task_after_prefetch(self):
+        """Prefetched streams must finish cleanly when resumed by another task."""
+        provider = _make_provider()
+        request = _make_request()
+
+        chunk1 = _make_chunk(content="Hello ")
+        chunk2 = _make_chunk(content="world")
+        chunk3 = _make_chunk(finish_reason="stop")
+        stream_mock = AsyncStreamMock([chunk1, chunk2, chunk3])
+
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=stream_mock,
+            ),
+            patch.object(
+                provider._global_rate_limiter,
+                "wait_if_blocked",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            stream = provider.stream_response(request, request_id="REQ_XTASK")
+            first_event = await anext(stream)
+
+            async def _collect_remaining() -> list[str]:
+                return [event async for event in stream]
+
+            remaining = await asyncio.create_task(_collect_remaining())
+
+        event_text = first_event + "".join(remaining)
+        assert "Hello" in event_text
+        assert "world" in event_text
+        assert "message_stop" in event_text
 
     def test_stream_malformed_tool_args_chunked(self):
         """Chunked tool args that never form valid JSON are flushed with {}."""

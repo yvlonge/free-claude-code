@@ -15,6 +15,22 @@ mock_provider = MagicMock(spec=NvidiaNimProvider)
 _stream_response_calls: list = []
 
 
+def _single_target_pool(model_ref: str):
+    from providers.registry import ProviderTarget, ProviderTargetPool
+
+    provider_id, model_name = model_ref.split("/", 1)
+    return ProviderTargetPool(
+        (
+            ProviderTarget(
+                provider_id=provider_id,
+                model_name=model_name,
+                full_ref=model_ref,
+                weight=1,
+            ),
+        )
+    )
+
+
 async def _mock_stream_response(*args, **kwargs):
     """Minimal async generator for streaming tests."""
     _stream_response_calls.append((args, kwargs))
@@ -30,6 +46,10 @@ def client():
     """HTTP client with provider resolution stubbed; patch only for this file."""
     with (
         patch("api.dependencies.resolve_provider", return_value=mock_provider),
+        patch(
+            "providers.registry.ProviderRegistry.get_target_pool",
+            side_effect=_single_target_pool,
+        ),
         TestClient(app) as test_client,
     ):
         yield test_client
@@ -103,7 +123,8 @@ def test_model_mapping(client: TestClient):
     assert len(_stream_response_calls) == 1
     args = _stream_response_calls[0][0]
     kwargs = _stream_response_calls[0][1]
-    assert args[0].model != "claude-3-haiku-20240307"
+    assert args[0].model == "test-model"
+    assert args[0].resolved_provider_model == "nvidia_nim/test-model"
     assert kwargs["thinking_enabled"] is True
 
 
@@ -121,13 +142,13 @@ def test_error_fallbacks(client: TestClient):
         "stream": True,
     }
 
-    def _raise_auth(*args, **kwargs):
+    async def _raise_auth(*args, **kwargs):
         raise AuthenticationError("Invalid Key")
 
-    def _raise_rate_limit(*args, **kwargs):
+    async def _raise_rate_limit(*args, **kwargs):
         raise RateLimitError("Too Many Requests")
 
-    def _raise_overloaded(*args, **kwargs):
+    async def _raise_overloaded(*args, **kwargs):
         raise OverloadedError("Server Overloaded")
 
     # 1. Authentication Error (401)
@@ -155,7 +176,7 @@ def test_error_fallbacks(client: TestClient):
 def test_generic_exception_returns_500(client: TestClient):
     """Non-ProviderError exceptions are caught and returned as HTTPException(500)."""
 
-    def _raise_runtime(*args, **kwargs):
+    async def _raise_runtime(*args, **kwargs):
         raise RuntimeError("unexpected crash")
 
     mock_provider.stream_response = _raise_runtime
@@ -180,7 +201,7 @@ def test_generic_exception_with_status_code(client: TestClient):
             super().__init__(msg)
             self.status_code = status_code
 
-    def _raise_with_status(*args, **kwargs):
+    async def _raise_with_status(*args, **kwargs):
         raise ExceptionWithStatus("bad gateway", 502)
 
     mock_provider.stream_response = _raise_with_status
@@ -204,7 +225,7 @@ def test_generic_exception_empty_message_returns_non_empty_detail(client: TestCl
         def __str__(self):
             return ""
 
-    def _raise_silent(*args, **kwargs):
+    async def _raise_silent(*args, **kwargs):
         raise SilentError()
 
     mock_provider.stream_response = _raise_silent

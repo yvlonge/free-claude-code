@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,7 +38,7 @@ _STRICT_EGRESS = WebFetchEgressPolicy(
 
 
 class FixedProviderModelRouter(ModelRouter):
-    """Test double: pin ``provider_id`` for OpenAI vs native routing assertions."""
+    """Test double: pin provider/model target refs for routing assertions."""
 
     def __init__(self, settings: Settings, provider_id: str) -> None:
         super().__init__(settings)
@@ -48,14 +49,42 @@ class FixedProviderModelRouter(ModelRouter):
     ) -> RoutedMessagesRequest:
         resolved = ResolvedModel(
             original_model=request.model,
-            provider_id=self._fixed_provider_id,
-            provider_model=request.model,
             provider_model_ref=f"{self._fixed_provider_id}/{request.model}",
             thinking_enabled=False,
         )
         routed = request.model_copy(deep=True)
-        routed.model = resolved.provider_model
         return RoutedMessagesRequest(request=routed, resolved=resolved)
+
+
+def _single_target_pool(model_ref: str):
+    from providers.registry import ProviderTarget, ProviderTargetPool
+
+    provider_id, model_name = model_ref.split("/", 1)
+    return ProviderTargetPool(
+        (
+            ProviderTarget(
+                provider_id=provider_id,
+                model_name=model_name,
+                full_ref=model_ref,
+                weight=1,
+            ),
+        )
+    )
+
+
+def _provider_pool(*provider_ids: str):
+    from providers.registry import ProviderTarget, ProviderTargetPool
+
+    targets = tuple(
+        ProviderTarget(
+            provider_id=provider_id,
+            model_name=f"{provider_id}-model",
+            full_ref=f"{provider_id}/{provider_id}-model",
+            weight=1,
+        )
+        for provider_id in provider_ids
+    )
+    return ProviderTargetPool(targets)
 
 
 def test_web_server_tool_not_detected_when_tool_only_listed():
@@ -101,6 +130,7 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled():
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: MagicMock(),
+        target_pool_getter=_single_target_pool,
         model_router=FixedProviderModelRouter(settings, "nvidia_nim"),
     )
     request = MessagesRequest(
@@ -116,7 +146,28 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled():
         tool_choice={"type": "tool", "name": "web_search"},
     )
     with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
-        service.create_message(request)
+        asyncio.run(service.create_message(request))
+
+
+def test_service_rejects_mixed_pool_when_any_target_uses_openai_chat():
+    settings = Settings()
+    settings.enable_web_server_tools = False
+    service = ClaudeProxyService(
+        settings,
+        provider_getter=lambda _: MagicMock(),
+        target_pool_getter=lambda _model_ref: _provider_pool("open_router", "deepseek"),
+        model_router=FixedProviderModelRouter(settings, "open_router"),
+    )
+    request = MessagesRequest(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[Message(role="user", content="search")],
+        tools=[Tool(name="web_search", type="web_search_20250305")],
+        tool_choice={"type": "tool", "name": "web_search"},
+    )
+
+    with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
+        asyncio.run(service.create_message(request))
 
 
 @pytest.mark.parametrize(
@@ -584,6 +635,7 @@ def test_service_rejects_listed_server_tools_on_openai_chat() -> None:
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: MagicMock(),
+        target_pool_getter=_single_target_pool,
         model_router=FixedProviderModelRouter(settings, "deepseek"),
     )
     request = MessagesRequest(
@@ -593,7 +645,7 @@ def test_service_rejects_listed_server_tools_on_openai_chat() -> None:
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
     with pytest.raises(InvalidRequestError, match="OpenAI Chat upstreams"):
-        service.create_message(request)
+        asyncio.run(service.create_message(request))
 
 
 def test_listed_server_tools_routed_on_open_router() -> None:
@@ -609,6 +661,7 @@ def test_listed_server_tools_routed_on_open_router() -> None:
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: mock_provider,
+        target_pool_getter=_single_target_pool,
         model_router=FixedProviderModelRouter(settings, "open_router"),
     )
     request = MessagesRequest(
@@ -617,5 +670,5 @@ def test_listed_server_tools_routed_on_open_router() -> None:
         messages=[Message(role="user", content="q")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
-    service.create_message(request)
+    asyncio.run(service.create_message(request))
     mock_provider.preflight_stream.assert_called()

@@ -36,6 +36,9 @@ Provider product E2E runs for every configured provider model from `MODEL`,
 live product smoke fails as `missing_env` unless you explicitly set
 `FCC_ALLOW_NO_PROVIDER_SMOKE=1`.
 
+`MODEL*` values can be weighted pools (`provider/model@3, other/model@1`). Smoke
+provider discovery expands pooled values into individual provider targets.
+
 ## Targets
 
 Default targets do not send real bot messages or load voice backends:
@@ -55,6 +58,7 @@ Default targets do not send real bot messages or load voice backends:
 | `lmstudio` | local `/models` plus native `/messages` through proxy | running LM Studio server |
 | `llamacpp` | local `/models` plus native `/messages` through proxy | running llama-server |
 | `ollama` | local `/api/tags` plus native Anthropic messages through proxy | running Ollama server |
+| `local_api` | local `/models` plus OpenAI-chat transport through proxy | running OpenAI-compatible local API server |
 
 Side-effectful targets are opt-in:
 
@@ -68,8 +72,16 @@ Side-effectful targets are opt-in:
 
 ```powershell
 $env:FCC_LIVE_SMOKE = "1"
-$env:FCC_SMOKE_PROVIDER_MATRIX = "open_router,nvidia_nim,deepseek,lmstudio,llamacpp,ollama"
+$env:FCC_SMOKE_PROVIDER_MATRIX = "open_router,nvidia_nim,deepseek,lmstudio,llamacpp,ollama,local_api"
 uv run pytest smoke/product -n 0 -s --tb=short
+```
+
+```powershell
+$env:FCC_LIVE_SMOKE = "1"
+$env:FCC_SMOKE_TARGETS = "local_api"
+$env:LOCAL_API_BASE_URL = "http://127.0.0.1:4000/v1"
+$env:MODEL = "local_api/local-model@2,ollama/llama3.1@1"
+uv run pytest smoke/prereq smoke/product -n 0 -s --tb=short
 ```
 
 ```powershell

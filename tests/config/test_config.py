@@ -647,6 +647,7 @@ class TestPerModelMapping:
         assert Settings.parse_provider_type("lmstudio/qwen") == "lmstudio"
         assert Settings.parse_provider_type("llamacpp/model") == "llamacpp"
         assert Settings.parse_provider_type("ollama/llama3.1") == "ollama"
+        assert Settings.parse_provider_type("local_api/my-model") == "local_api"
 
     def test_parse_model_name(self):
         """parse_model_name extracts model name from model string."""
@@ -657,3 +658,24 @@ class TestPerModelMapping:
         assert Settings.parse_model_name("lmstudio/qwen") == "qwen"
         assert Settings.parse_model_name("llamacpp/model") == "model"
         assert Settings.parse_model_name("ollama/llama3.1") == "llama3.1"
+        assert Settings.parse_model_name("local_api/my-model") == "my-model"
+
+    def test_model_pool_setting_parses_weighted_targets(self):
+        """MODEL settings can parse weighted target pools."""
+        from config.settings import Settings
+
+        targets = Settings.resolve_model_targets("local_api/foo@3, open_router/bar@1")
+
+        assert [target.full_ref for target in targets] == [
+            "local_api/foo",
+            "open_router/bar",
+        ]
+        assert [target.weight for target in targets] == [3, 1]
+
+    def test_model_pool_setting_rejects_zero_weight(self, monkeypatch):
+        """MODEL weight must be positive when using pooled syntax."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("MODEL", "local_api/foo@0")
+        with pytest.raises(ValidationError, match="weight must be > 0"):
+            Settings()

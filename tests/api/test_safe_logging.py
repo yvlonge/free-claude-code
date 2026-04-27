@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,22 @@ from config.settings import Settings
 from core.anthropic.sse import SSEBuilder
 
 
+def _single_target_pool(model_ref: str):
+    from providers.registry import ProviderTarget, ProviderTargetPool
+
+    provider_id, model_name = model_ref.split("/", 1)
+    return ProviderTargetPool(
+        (
+            ProviderTarget(
+                provider_id=provider_id,
+                model_name=model_name,
+                full_ref=model_ref,
+                weight=1,
+            ),
+        )
+    )
+
+
 def test_create_message_skips_full_payload_debug_log_by_default():
     settings = Settings()
     assert settings.log_raw_api_payloads is False
@@ -23,7 +40,11 @@ def test_create_message_skips_full_payload_debug_log_by_default():
         yield "event: ping\ndata: {}\n\n"
 
     mock_provider.stream_response = fake_stream
-    service = ClaudeProxyService(settings, provider_getter=lambda _: mock_provider)
+    service = ClaudeProxyService(
+        settings,
+        provider_getter=lambda _: mock_provider,
+        target_pool_getter=_single_target_pool,
+    )
 
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
@@ -32,7 +53,7 @@ def test_create_message_skips_full_payload_debug_log_by_default():
     )
 
     with patch.object(services_mod.logger, "debug") as mock_debug:
-        service.create_message(request)
+        asyncio.run(service.create_message(request))
 
     full_payload_calls = [
         c
@@ -51,7 +72,11 @@ def test_create_message_logs_full_payload_when_opt_in():
         yield "event: ping\ndata: {}\n\n"
 
     mock_provider.stream_response = fake_stream
-    service = ClaudeProxyService(settings, provider_getter=lambda _: mock_provider)
+    service = ClaudeProxyService(
+        settings,
+        provider_getter=lambda _: mock_provider,
+        target_pool_getter=_single_target_pool,
+    )
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
         max_tokens=10,
@@ -59,7 +84,7 @@ def test_create_message_logs_full_payload_when_opt_in():
     )
 
     with patch.object(services_mod.logger, "debug") as mock_debug:
-        service.create_message(request)
+        asyncio.run(service.create_message(request))
 
     keys = [c.args[0] for c in mock_debug.call_args_list if c.args]
     assert any(k == "FULL_PAYLOAD [{}]: {}" for k in keys)
@@ -103,11 +128,15 @@ def test_create_message_unexpected_error_default_logs_exclude_exception_text():
 
     mock_provider = MagicMock()
 
-    def stream_boom(*_a, **_kw):
+    async def stream_boom(*_a, **_kw):
         raise RuntimeError(secret)
 
     mock_provider.stream_response = stream_boom
-    service = ClaudeProxyService(settings, provider_getter=lambda _: mock_provider)
+    service = ClaudeProxyService(
+        settings,
+        provider_getter=lambda _: mock_provider,
+        target_pool_getter=_single_target_pool,
+    )
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
         max_tokens=10,
@@ -118,7 +147,7 @@ def test_create_message_unexpected_error_default_logs_exclude_exception_text():
         patch.object(services_mod.logger, "error") as log_err,
         pytest.raises(HTTPException),
     ):
-        service.create_message(request)
+        asyncio.run(service.create_message(request))
 
     blob = _flatten_log_calls(log_err)
     assert secret not in blob
@@ -134,11 +163,15 @@ def test_create_message_unexpected_error_always_returns_500():
     settings = Settings()
     mock_provider = MagicMock()
 
-    def stream_boom(*_a, **_kw):
+    async def stream_boom(*_a, **_kw):
         raise WeirdError("no")
 
     mock_provider.stream_response = stream_boom
-    service = ClaudeProxyService(settings, provider_getter=lambda _: mock_provider)
+    service = ClaudeProxyService(
+        settings,
+        provider_getter=lambda _: mock_provider,
+        target_pool_getter=_single_target_pool,
+    )
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
         max_tokens=10,
@@ -146,7 +179,7 @@ def test_create_message_unexpected_error_always_returns_500():
     )
 
     with pytest.raises(HTTPException) as excinfo:
-        service.create_message(request)
+        asyncio.run(service.create_message(request))
 
     assert excinfo.value.status_code == 500
 
@@ -188,6 +221,7 @@ def test_count_tokens_unexpected_error_default_logs_exclude_exception_text():
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: MagicMock(),
+        target_pool_getter=_single_target_pool,
         token_counter=boom,
     )
     from api.models.anthropic import TokenCountRequest

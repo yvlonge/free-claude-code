@@ -12,7 +12,7 @@
 [![Code style: Ruff](https://img.shields.io/badge/code%20formatting-ruff-f5a623.svg?style=for-the-badge)](https://github.com/astral-sh/ruff)
 [![Logging: Loguru](https://img.shields.io/badge/logging-loguru-4ecdc4.svg?style=for-the-badge)](https://github.com/Delgan/loguru)
 
-A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NIM** (40 req/min free), **OpenRouter** (hundreds of models), **DeepSeek** (direct API), **LM Studio** (fully local), **llama.cpp** (local with Anthropic endpoints), or **Ollama** (fully local, native Anthropic Messages).
+A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NIM** (40 req/min free), **OpenRouter** (hundreds of models), **DeepSeek** (direct API), **LM Studio** (fully local), **llama.cpp** (local with Anthropic endpoints), **Ollama** (fully local, native Anthropic Messages), or **local_api** (OpenAI-compatible local/LAN endpoint).
 
 [Quick Start](#quick-start) · [Providers](#providers) · [Discord Bot](#discord-bot) · [Configuration](#configuration) · [Development](#development) · [Contributing](#contributing)
 
@@ -31,8 +31,9 @@ A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NI
 | -------------------------- | ----------------------------------------------------------------------------------------------- |
 | **Zero Cost**              | 40 req/min free on NVIDIA NIM. Free models on OpenRouter. Fully local with LM Studio, Ollama, or llama.cpp |
 | **Drop-in Replacement**    | Set 2 env vars. No modifications to Claude Code CLI or VSCode extension needed                  |
-| **6 Providers**            | NVIDIA NIM, OpenRouter, DeepSeek, LM Studio (local), llama.cpp (`llama-server`), Ollama         |
+| **7 Providers**            | NVIDIA NIM, OpenRouter, DeepSeek, LM Studio (local), llama.cpp (`llama-server`), Ollama, local_api |
 | **Per-Model Mapping**      | Route Opus / Sonnet / Haiku to different models and providers. Mix providers freely             |
+| **Weighted Target Pools**  | `MODEL*` supports weighted pools (`provider/a@3,provider/b@1`) with pre-output failover         |
 | **Thinking Token Support** | Parses `<think>` tags and `reasoning_content` into native Claude thinking blocks                |
 | **Heuristic Tool Parser**  | Models outputting tool calls as text are auto-parsed into structured tool use                   |
 | **Request Optimization**   | 5 categories of trivial API calls intercepted locally, saving quota and latency                 |
@@ -52,6 +53,7 @@ A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NI
    - **LM Studio**: No API key needed. Run locally with [LM Studio](https://lmstudio.ai)
    - **llama.cpp**: No API key needed. Run `llama-server` locally.
    - **Ollama**: No API key needed. Run locally with [Ollama](https://ollama.com) (`ollama serve`).
+   - **local_api**: No key required by default. Point to any OpenAI-compatible local/LAN endpoint.
 2. Install [Claude Code](https://github.com/anthropics/claude-code)
 
 ### Install `uv`
@@ -180,6 +182,42 @@ MODEL="ollama/llama3.1"                             # fallback
 ```
 
 Install: [ollama.com](https://ollama.com). Pull a model (`ollama pull llama3.1`) and keep the server running (`ollama serve` or the desktop app). Use the same model tag in `MODEL*` that appears in `ollama list` (for example `ollama/llama3.1:8b`).
+
+</details>
+
+<details>
+<summary><b>local_api</b> (OpenAI-compatible local/LAN endpoint)</summary>
+
+```dotenv
+LOCAL_API_BASE_URL="http://127.0.0.1:4000/v1"
+# Optional for secured local APIs
+LOCAL_API_API_KEY=""
+
+MODEL_OPUS="local_api/my-opus-model"
+MODEL_SONNET="local_api/my-sonnet-model"
+MODEL_HAIKU="local_api/my-haiku-model"
+MODEL="local_api/my-default-model"
+```
+
+</details>
+
+<details>
+<summary><b>Weighted target pools</b> (health-aware failover)</summary>
+
+Each `MODEL*` variable can be a weighted pool using comma-separated targets:
+
+```dotenv
+# 3:1 traffic split while both are healthy
+MODEL="local_api/primary@3, open_router/deepseek/deepseek-r1-0528:free@1"
+
+# Per-tier pools are also supported
+MODEL_SONNET="local_api/sonnet-fast@2, ollama/llama3.1@1"
+
+# Cooldown in seconds for retryable pre-output failures
+PROVIDER_TARGET_COOLDOWN_SECONDS=30
+```
+
+Retryable pre-output failures (timeouts, 429/5xx overload-style failures) place that target on cooldown and retry another healthy target. If all targets are unavailable before any output is emitted, the API returns HTTP `503` with a `Retry-After` header.
 
 </details>
 
@@ -379,6 +417,7 @@ The proxy also exposes Claude-compatible probe routes: `GET /v1/models`, `POST /
 | **LM Studio**  | Free (local) | Unlimited  | Privacy, offline use, no rate limits |
 | **llama.cpp**  | Free (local) | Unlimited  | Lightweight local inference engine   |
 | **Ollama**     | Free (local) | Unlimited  | Easy local LLM runtime, native Anthropic API |
+| **local_api**  | Local/LAN    | Depends    | OpenAI-compatible self-hosted endpoints |
 
 Models use a prefix format: `provider_prefix/model/name`. An invalid prefix causes an error.
 
@@ -390,6 +429,7 @@ Models use a prefix format: `provider_prefix/model/name`. An invalid prefix caus
 | LM Studio  | `lmstudio/...`    | (none)               | `localhost:1234/v1`           |
 | llama.cpp  | `llamacpp/...`    | (none)               | `localhost:8080/v1`           |
 | Ollama     | `ollama/...`      | (none)               | `localhost:11434`             |
+| local_api  | `local_api/...`   | `LOCAL_API_API_KEY` (optional) | `http://127.0.0.1:4000/v1` |
 
 <details>
 <summary><b>NVIDIA NIM models</b></summary>
@@ -581,6 +621,8 @@ Configure via `WHISPER_DEVICE` (`cpu` | `cuda` | `nvidia_nim`) and `WHISPER_MODE
 | `LMSTUDIO_PROXY`     | Optional proxy URL for LM Studio requests (`http://...` or `socks5://...`) | `""` |
 | `LLAMACPP_PROXY`     | Optional proxy URL for llama.cpp requests (`http://...` or `socks5://...`) | `""` |
 | `OLLAMA_BASE_URL`    | Ollama server root URL                                               | `http://localhost:11434`                          |
+| `LOCAL_API_BASE_URL` | OpenAI-compatible local API base URL                                 | `http://127.0.0.1:4000/v1`                        |
+| `LOCAL_API_API_KEY`  | Optional API key for `local_api`                                     | `""`                                              |
 
 ### Rate Limiting & Timeouts
 
@@ -589,6 +631,7 @@ Configure via `WHISPER_DEVICE` (`cpu` | `cuda` | `nvidia_nim`) and `WHISPER_MODE
 | `PROVIDER_RATE_LIMIT`      | LLM API requests per window               | `40`    |
 | `PROVIDER_RATE_WINDOW`     | Rate limit window (seconds)               | `60`    |
 | `PROVIDER_MAX_CONCURRENCY` | Max simultaneous open provider streams    | `5`     |
+| `PROVIDER_TARGET_COOLDOWN_SECONDS` | Cooldown window for retryable pre-output pool failures | `30` |
 | `HTTP_READ_TIMEOUT`        | Read timeout for provider requests (s)    | `120`   |
 | `HTTP_WRITE_TIMEOUT`       | Write timeout for provider requests (s)   | `10`    |
 | `HTTP_CONNECT_TIMEOUT`     | Connect timeout for provider requests (s) | `10`     |
